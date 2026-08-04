@@ -100,6 +100,9 @@ done < <(find "$SRC_DIR" -type f \( -iname '*.tif' -o -iname '*.tiff' \) -not -p
 
 # ── Convert in parallel ─────────────────────────────────
 
+FAIL_LOG="$(mktemp)"
+trap 'rm -f "$FAIL_LOG"' EXIT
+
 convert_one() {
     local file="$1"
     local relative="${file#"$SRC_DIR"/}"
@@ -107,16 +110,22 @@ convert_one() {
     base="${base%.[tT][iI][fF][fF]}"
     local out_file="$DST_DIR/${base}.jp2"
     mkdir -p "$(dirname "$out_file")"
-    magick "$file" -quality 0 "$out_file"
-    echo "  CONVERT  $relative"
+    if magick "$file" -quality 0 "$out_file" 2>&1; then
+        echo "  CONVERT  $relative"
+    else
+        echo "  FAIL     $relative" >&2
+        echo "$file" >> "$FAIL_LOG"
+    fi
 }
 export -f convert_one
-export SRC_DIR DST_DIR
+export SRC_DIR DST_DIR FAIL_LOG
 
 CONVERTED=0
+FAILED=0
 if [ ${#TO_CONVERT[@]} -gt 0 ]; then
-    printf '%s\0' "${TO_CONVERT[@]}" | xargs -0 -P"$JOBS" -I{} bash -c 'convert_one "$@"' _ {}
-    CONVERTED=${#TO_CONVERT[@]}
+    printf '%s\0' "${TO_CONVERT[@]}" | xargs -0 -P"$JOBS" -I{} bash -c 'convert_one "$@"' _ {} || true
+    FAILED=$(wc -l < "$FAIL_LOG" | tr -d ' ')
+    CONVERTED=$(( ${#TO_CONVERT[@]} - FAILED ))
 fi
 
 # ── Summary ────────────────────────────────────────────
@@ -124,7 +133,10 @@ fi
 echo ""
 echo "────────────────────────────────"
 echo "  Converted: $CONVERTED TIF → JP2"
+echo "  Failed:    $FAILED"
 echo "  Skipped:   $SKIPPED (up to date)"
 echo "  Jobs:      $JOBS"
 echo "────────────────────────────────"
 echo ""
+
+[ "$FAILED" -eq 0 ]

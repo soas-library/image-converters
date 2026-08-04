@@ -108,22 +108,31 @@ done < <(find "$SRC_DIR" -type f -iname '*.jp2' -not -path '*/.git/*' -not -name
 
 # ── Convert in parallel ─────────────────────────────────
 
+FAIL_LOG="$(mktemp)"
+trap 'rm -f "$FAIL_LOG"' EXIT
+
 convert_one() {
     local file="$1"
     local relative="${file#"$SRC_DIR"/}"
     local base="${relative%.[jJ][pP]2}"
     local out_file="$DST_DIR/${base}.jpg"
     mkdir -p "$(dirname "$out_file")"
-    magick "$file" -quality "$QUALITY" "$out_file"
-    echo "  CONVERT  $relative"
+    if magick "$file" -quality "$QUALITY" "$out_file" 2>&1; then
+        echo "  CONVERT  $relative"
+    else
+        echo "  FAIL     $relative" >&2
+        echo "$file" >> "$FAIL_LOG"
+    fi
 }
 export -f convert_one
-export SRC_DIR DST_DIR QUALITY
+export SRC_DIR DST_DIR QUALITY FAIL_LOG
 
 CONVERTED=0
+FAILED=0
 if [ ${#TO_CONVERT[@]} -gt 0 ]; then
-    printf '%s\0' "${TO_CONVERT[@]}" | xargs -0 -P"$JOBS" -I{} bash -c 'convert_one "$@"' _ {}
-    CONVERTED=${#TO_CONVERT[@]}
+    printf '%s\0' "${TO_CONVERT[@]}" | xargs -0 -P"$JOBS" -I{} bash -c 'convert_one "$@"' _ {} || true
+    FAILED=$(wc -l < "$FAIL_LOG" | tr -d ' ')
+    CONVERTED=$(( ${#TO_CONVERT[@]} - FAILED ))
 fi
 
 # ── Summary ────────────────────────────────────────────
@@ -131,8 +140,11 @@ fi
 echo ""
 echo "────────────────────────────────"
 echo "  Converted: $CONVERTED JP2 → JPG"
+echo "  Failed:    $FAILED"
 echo "  Skipped:   $SKIPPED (up to date)"
 echo "  Quality:   $QUALITY"
 echo "  Jobs:      $JOBS"
 echo "────────────────────────────────"
 echo ""
+
+[ "$FAILED" -eq 0 ]
