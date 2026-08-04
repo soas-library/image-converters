@@ -12,21 +12,29 @@ TIFF (scan) ──→ JP2 (master) ──→ JPG (dissemination)
 | Script | From | To | Use case |
 |--------|------|----|----------|
 | `tif-to-jp2.sh` | TIFF | JP2 (lossless) | Create preservation masters from scans |
-| `jp2-to-jpg.sh` | JP2 | JPG (quality 95) | Create access/dissemination copies |
+| `jp2-to-jpg.sh` | JP2 | JPG (configurable quality) | Create access/dissemination copies |
 | `jp2-to-tif.sh` | JP2 | TIFF (LZW) | Export high-res masters for clients |
 
 ## Usage
 
-All scripts take the same arguments:
+All scripts support parallel conversion and take the same positional arguments:
 
 ```bash
-./tif-to-jp2.sh <SRC_DIR> <DST_DIR>
-./jp2-to-jpg.sh <SRC_DIR> <DST_DIR>
-./jp2-to-tif.sh <SRC_DIR> <DST_DIR>
+./tif-to-jp2.sh [-j N] <SRC_DIR> <DST_DIR>
+./jp2-to-jpg.sh [-j N] [-q N] <SRC_DIR> <DST_DIR>
+./jp2-to-tif.sh [-j N] <SRC_DIR> <DST_DIR>
 ```
 
 - **SRC_DIR** — directory containing source images
 - **DST_DIR** — output directory (created if it doesn't exist)
+
+### Options
+
+| Flag | Script | Description |
+|------|--------|-------------|
+| `-j N` | all | Parallel jobs (default: number of CPU cores) |
+| `-q N` | `jp2-to-jpg.sh` | JPEG quality 1–100 (default: 95) |
+| `-h` | all | Show usage help |
 
 Source directory is never modified. Directory structure is mirrored in output.
 
@@ -36,6 +44,12 @@ Source directory is never modified. Directory structure is mirrored in output.
 # Full pipeline: scan TIFFs → master JP2s → access JPGs
 ./tif-to-jp2.sh /scans/2024-batch-01 /archive/masters/2024-batch-01
 ./jp2-to-jpg.sh /archive/masters/2024-batch-01 /access/2024-batch-01
+
+# Lower quality, 8 parallel jobs
+./jp2-to-jpg.sh -j 8 -q 80 /archive/masters/2024-batch-01 /access/2024-batch-01
+
+# Single-threaded conversion
+./tif-to-jp2.sh -j 1 /scans/batch /archive/batch
 ```
 
 ## Idempotent / replayable
@@ -49,7 +63,7 @@ Each script compares source and destination timestamps. If the output file alrea
 ## Requirements
 
 - [ImageMagick](https://imagemagick.org/) (`magick` command) with JP2 (JPEG 2000) support
-- Bash 4+ and standard coreutils (`find`, `mkdir`)
+- Bash 4+ and standard coreutils (`find`, `mkdir`, `xargs`)
 
 ### macOS (Homebrew)
 
@@ -67,7 +81,7 @@ The [standard Windows installer](https://imagemagick.org/script/download.php) in
 ## Limitations
 
 - JPEG is lossy even at quality 95. For lossless preservation, keep the original JP2s.
-- Does not parallelise conversions. For large batches, consider wrapping with `xargs -P` or GNU `parallel`.
+- Output lines may interleave when running with multiple parallel jobs.
 - Does not remove files from output that no longer exist in source. Delete the output dir and re-run for a clean slate.
 
 ## License

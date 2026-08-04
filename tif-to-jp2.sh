@@ -7,7 +7,7 @@
 # │  Idempotent — skips files where output is newer      │
 # │  than source, like make would.                       │
 # │                                                      │
-# │  Usage:  ./tif-to-jp2.sh <SRC_DIR> <DST_DIR>         │
+# │  Usage:  ./tif-to-jp2.sh [-j N] <SRC_DIR> <DST_DIR>  │
 # │                                                      │
 # │  Requires: ImageMagick (magick)                      │
 # │                                                      │
@@ -21,15 +21,33 @@ set -euo pipefail
 # ── Usage ──────────────────────────────────────────────
 
 usage() {
-    echo "Usage: $0 <SRC_DIR> <DST_DIR>"
+    echo "Usage: $0 [-j N] [-h] <SRC_DIR> <DST_DIR>"
     echo ""
     echo "  SRC_DIR   Path to the source directory containing TIFF files"
     echo "  DST_DIR   Path to the output directory for JP2 files"
+    echo ""
+    echo "Options:"
+    echo "  -j N   Parallel jobs (default: number of CPU cores)"
+    echo "  -h     Show this help"
     echo ""
     echo "Converts TIFF images to JP2 (lossless). Non-TIFF files are ignored."
     echo "Idempotent: skips files where the output is newer than the source."
     exit 1
 }
+
+# ── Options ──────────────────────────────────────────────
+
+JOBS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+
+while getopts ":j:h" opt; do
+    case $opt in
+        j) JOBS="$OPTARG" ;;
+        h) usage ;;
+        :) echo "Error: -$OPTARG requires an argument" >&2; exit 1 ;;
+        *) echo "Error: unknown option -$OPTARG" >&2; exit 1 ;;
+    esac
+done
+shift $((OPTIND - 1))
 
 if [ $# -ne 2 ]; then
     usage
@@ -55,12 +73,10 @@ needs_update() {
     [ ! -f "$dst" ] || [ "$src" -nt "$dst" ]
 }
 
-# ── Counters ───────────────────────────────────────────
+# ── Collect files needing conversion ─────────────────────
 
-CONVERTED=0
+TO_CONVERT=()
 SKIPPED=0
-
-# ── Process files ──────────────────────────────────────
 
 echo ""
 echo "SRC: $SRC_DIR"
@@ -76,14 +92,32 @@ while IFS= read -r -d '' file; do
     out_file="$DST_DIR/${base}.jp2"
 
     if needs_update "$file" "$out_file"; then
-        mkdir -p "$(dirname "$out_file")"
-        magick "$file" -quality 0 "$out_file"
-        echo "  CONVERT  $relative"
-        CONVERTED=$((CONVERTED + 1))
+        TO_CONVERT+=("$file")
     else
         SKIPPED=$((SKIPPED + 1))
     fi
 done < <(find "$SRC_DIR" -type f \( -iname '*.tif' -o -iname '*.tiff' \) -not -path '*/.git/*' -not -name '.DS_Store' -print0)
+
+# ── Convert in parallel ─────────────────────────────────
+
+convert_one() {
+    local file="$1"
+    local relative="${file#"$SRC_DIR"/}"
+    local base="${relative%.[tT][iI][fF]}"
+    base="${base%.[tT][iI][fF][fF]}"
+    local out_file="$DST_DIR/${base}.jp2"
+    mkdir -p "$(dirname "$out_file")"
+    magick "$file" -quality 0 "$out_file"
+    echo "  CONVERT  $relative"
+}
+export -f convert_one
+export SRC_DIR DST_DIR
+
+CONVERTED=0
+if [ ${#TO_CONVERT[@]} -gt 0 ]; then
+    printf '%s\0' "${TO_CONVERT[@]}" | xargs -0 -P"$JOBS" -I{} bash -c 'convert_one "$@"' _ {}
+    CONVERTED=${#TO_CONVERT[@]}
+fi
 
 # ── Summary ────────────────────────────────────────────
 
@@ -91,5 +125,6 @@ echo ""
 echo "────────────────────────────────"
 echo "  Converted: $CONVERTED TIF → JP2"
 echo "  Skipped:   $SKIPPED (up to date)"
+echo "  Jobs:      $JOBS"
 echo "────────────────────────────────"
 echo ""
