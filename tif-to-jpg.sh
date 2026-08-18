@@ -119,7 +119,7 @@ convert_one() {
     base="${base%.[tT][iI][fF][fF]}"
     local out_file="$DST_DIR/${base}.jpg"
     mkdir -p "$(dirname "$out_file")"
-    if magick "$file" -quality "$QUALITY" "$out_file" 2>&1; then
+    if magick "$file" -quality "$QUALITY" "$out_file" 2>/dev/null; then
         echo "  CONVERT  $relative"
     else
         echo "  FAIL     $relative" >&2
